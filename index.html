@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>视频浏览与帧截取</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    body {
+      margin: 0;
+      padding: 24px;
+      background: #f7f7f9;
+      color: #222;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 1.75rem;
+    }
+
+    .container {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 24px;
+    }
+
+    @media (min-width: 900px) {
+      .container {
+        grid-template-columns: 2fr 1fr;
+        align-items: start;
+      }
+    }
+
+    .panel {
+      background: rgba(255, 255, 255, 0.95);
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.06);
+      backdrop-filter: blur(8px);
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    label {
+      font-weight: 600;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    input[type="file"] {
+      padding: 12px;
+      border: 2px dashed #8a8faa;
+      border-radius: 12px;
+      background: #f0f1f8;
+      cursor: pointer;
+      transition: border-color 0.2s ease, background 0.2s ease;
+    }
+
+    input[type="file"]:hover {
+      border-color: #536dfe;
+      background: #e6e8ff;
+    }
+
+    video, img {
+      width: 100%;
+      max-height: 480px;
+      background: #000;
+      border-radius: 12px;
+      object-fit: contain;
+    }
+
+    canvas {
+      display: none;
+    }
+
+    button {
+      padding: 12px 16px;
+      border-radius: 10px;
+      border: none;
+      background: #536dfe;
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s ease;
+    }
+
+    button:disabled {
+      background: #b0b4d0;
+      cursor: not-allowed;
+    }
+
+    button:not(:disabled):hover {
+      background: #3a51f5;
+    }
+
+    .preview-info {
+      font-size: 0.95rem;
+      color: #4a4f6a;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .actions {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .actions a {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 12px 16px;
+      border-radius: 10px;
+      text-decoration: none;
+      background: #1db954;
+      color: #fff;
+      font-weight: 600;
+      transition: background 0.2s ease;
+    }
+
+    .actions a:hover {
+      background: #17a245;
+    }
+
+    .tip {
+      font-size: 0.85rem;
+      color: #707691;
+    }
+  </style>
+</head>
+<body>
+  <h1>视频浏览与原帧截取</h1>
+
+  <div class="container">
+    <section class="panel">
+      <label>
+        请选择要上传的视频文件：
+        <input id="video-input" type="file" accept="video/*">
+      </label>
+
+      <div class="preview-info" id="video-info" hidden>
+        <span id="video-name"></span>
+        <span id="video-size"></span>
+        <span id="video-resolution"></span>
+        <span class="tip">提示：拖动进度条浏览任意帧，然后点击“截取当前帧”。</span>
+      </div>
+
+      <video id="video-player" controls preload="metadata"></video>
+
+      <div class="actions">
+        <button id="capture-btn" type="button" disabled>截取当前帧</button>
+        <a id="download-link" href="#" download hidden>下载截取的原尺寸图片</a>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>帧预览</h2>
+      <img id="frame-preview" alt="截取的帧预览" hidden>
+      <p class="tip">截取的帧将保持视频原始尺寸并以无损 PNG 输出。</p>
+    </section>
+  </div>
+
+  <canvas id="capture-canvas"></canvas>
+
+  <script>
+    const input = document.getElementById('video-input');
+    const video = document.getElementById('video-player');
+    const info = document.getElementById('video-info');
+    const nameEl = document.getElementById('video-name');
+    const sizeEl = document.getElementById('video-size');
+    const resolutionEl = document.getElementById('video-resolution');
+    const captureBtn = document.getElementById('capture-btn');
+    const downloadLink = document.getElementById('download-link');
+    const previewImg = document.getElementById('frame-preview');
+    const canvas = document.getElementById('capture-canvas');
+    const ctx = canvas.getContext('2d');
+
+    let videoURL = null;
+
+    function formatBytes(bytes) {
+      if (bytes === 0) return '0 B';
+      const k = 1024;
+      const dm = 2;
+      const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return `${(bytes / Math.pow(k, i)).toFixed(dm)} ${sizes[i]}`;
+    }
+
+    input.addEventListener('change', (event) => {
+      const file = event.target.files && event.target.files[0];
+      if (!file) {
+        reset();
+        return;
+      }
+
+      if (videoURL) {
+        URL.revokeObjectURL(videoURL);
+      }
+
+      videoURL = URL.createObjectURL(file);
+      video.src = videoURL;
+      video.controls = true;
+      video.removeAttribute('hidden');
+
+      nameEl.textContent = `文件名：${file.name}`;
+      sizeEl.textContent = `文件大小：${formatBytes(file.size)}`;
+      resolutionEl.textContent = '分辨率：读取中...';
+      info.hidden = false;
+      captureBtn.disabled = true;
+      downloadLink.hidden = true;
+      previewImg.hidden = true;
+      previewImg.removeAttribute('src');
+
+      video.addEventListener('loadedmetadata', handleMetadata, { once: true });
+    });
+
+    function handleMetadata() {
+      if (!Number.isFinite(video.videoWidth) || !Number.isFinite(video.videoHeight)) {
+        resolutionEl.textContent = '分辨率：无法读取';
+        captureBtn.disabled = true;
+        return;
+      }
+
+      resolutionEl.textContent = `分辨率：${video.videoWidth} × ${video.videoHeight}`;
+      captureBtn.disabled = false;
+    }
+
+    captureBtn.addEventListener('click', () => {
+      if (video.readyState < 2) {
+        alert('视频尚未加载完成，稍后再试。');
+        return;
+      }
+
+      const width = video.videoWidth;
+      const height = video.videoHeight;
+
+      canvas.width = width;
+      canvas.height = height;
+      ctx.drawImage(video, 0, 0, width, height);
+
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          alert('截取失败，请重试。');
+          return;
+        }
+
+        const blobURL = URL.createObjectURL(blob);
+        previewImg.src = blobURL;
+        previewImg.hidden = false;
+
+        downloadLink.href = blobURL;
+        downloadLink.download = generateFileName();
+        downloadLink.hidden = false;
+      }, 'image/png'); // PNG 保证无损压缩
+    });
+
+    function generateFileName() {
+      const timestamp = new Date()
+        .toISOString()
+        .replace(/[-:]/g, '')
+        .replace('T', '_')
+        .slice(0, 15);
+      return `frame_${timestamp}.png`;
+    }
+
+    function reset() {
+      if (videoURL) {
+        URL.revokeObjectURL(videoURL);
+        videoURL = null;
+      }
+
+      video.removeAttribute('src');
+      video.load();
+      info.hidden = true;
+      captureBtn.disabled = true;
+      downloadLink.hidden = true;
+      previewImg.hidden = true;
+      previewImg.removeAttribute('src');
+    }
+
+    window.addEventListener('beforeunload', () => {
+      if (videoURL) {
+        URL.revokeObjectURL(videoURL);
+      }
+      if (downloadLink.href.startsWith('blob:')) {
+        URL.revokeObjectURL(downloadLink.href);
+      }
+    });
+  </script>
+</body>
+</html>
+
