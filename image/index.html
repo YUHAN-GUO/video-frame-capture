@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>图片高清放大处理</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    body {
+      margin: 0;
+      padding: 24px;
+      background: #f7f7f9;
+      color: #222;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 1.75rem;
+    }
+
+    .container {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 24px;
+    }
+
+    @media (min-width: 1100px) {
+      .container {
+        grid-template-columns: 1fr 1fr;
+        align-items: start;
+      }
+    }
+
+    .panel {
+      background: rgba(255, 255, 255, 0.96);
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.06);
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      backdrop-filter: blur(8px);
+    }
+
+    label {
+      font-weight: 600;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    input[type="file"] {
+      padding: 12px;
+      border: 2px dashed #8a8faa;
+      border-radius: 12px;
+      background: #f0f1f8;
+      cursor: pointer;
+      transition: border-color 0.2s ease, background 0.2s ease;
+    }
+
+    input[type="file"]:hover {
+      border-color: #536dfe;
+      background: #e6e8ff;
+    }
+
+    .controls {
+      display: grid;
+      gap: 16px;
+    }
+
+    .slider-group,
+    .select-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .slider-label {
+      display: flex;
+      justify-content: space-between;
+      font-weight: 600;
+      color: #4a4f6a;
+    }
+
+    input[type="range"] {
+      accent-color: #536dfe;
+    }
+
+    button {
+      padding: 12px 16px;
+      border-radius: 10px;
+      border: none;
+      background: #536dfe;
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s ease;
+    }
+
+    button:disabled {
+      background: #b0b4d0;
+      cursor: not-allowed;
+    }
+
+    button:not(:disabled):hover {
+      background: #3a51f5;
+    }
+
+    canvas {
+      width: 100%;
+      border-radius: 12px;
+      background: #111;
+      object-fit: contain;
+    }
+
+    .canvas-wrapper {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .canvas-wrapper h2 {
+      margin: 0;
+      font-size: 1.2rem;
+    }
+
+    .tip {
+      font-size: 0.9rem;
+      color: #707691;
+    }
+
+    .actions {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .actions button.secondary {
+      background: #1db954;
+    }
+
+    .actions button.secondary:hover {
+      background: #17a245;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+  </style>
+</head>
+<body>
+  <h1>图片高清放大处理</h1>
+
+  <div class="container">
+    <section class="panel">
+      <label>
+        请选择要处理的图片：
+        <input id="image-input" type="file" accept="image/*">
+      </label>
+
+      <div class="controls" id="controls" hidden>
+        <div class="slider-group">
+          <div class="slider-label">
+            <span>放大倍数</span>
+            <span id="scale-value">1.00×</span>
+          </div>
+          <input id="scale" type="range" min="1" max="4" step="0.1" value="2">
+        </div>
+
+        <div class="select-group">
+          <span>放大模式</span>
+          <select id="quality">
+            <option value="high">平滑高清（推荐）</option>
+            <option value="medium">平滑（标准）</option>
+            <option value="low">平滑（快速）</option>
+            <option value="pixelated">像素风格</option>
+          </select>
+        </div>
+
+        <p class="tip">提示：放大倍数越高，处理时间越长。平滑高清会尽量保留细节；像素风格适合像素画。</p>
+
+        <div class="actions">
+          <button id="process-btn" type="button" disabled>开始放大</button>
+          <button id="download-btn" class="secondary hidden" type="button">下载放大后的图片</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel canvas-wrapper">
+      <div>
+        <h2>原图预览</h2>
+        <canvas id="original-canvas"></canvas>
+      </div>
+      <div>
+        <h2>高清放大预览</h2>
+        <canvas id="upscaled-canvas"></canvas>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const input = document.getElementById('image-input');
+    const controls = document.getElementById('controls');
+    const scaleInput = document.getElementById('scale');
+    const scaleValue = document.getElementById('scale-value');
+    const qualitySelect = document.getElementById('quality');
+    const processBtn = document.getElementById('process-btn');
+    const downloadBtn = document.getElementById('download-btn');
+    const originalCanvas = document.getElementById('original-canvas');
+    const upscaledCanvas = document.getElementById('upscaled-canvas');
+    const originalCtx = originalCanvas.getContext('2d');
+    const upscaledCtx = upscaledCanvas.getContext('2d');
+
+    let originalBitmap = null;
+    let originalFile = null;
+    let upscaledBlobUrl = null;
+
+    input.addEventListener('change', async (event) => {
+      const file = event.target.files && event.target.files[0];
+      if (!file) {
+        reset();
+        return;
+      }
+
+      try {
+        if (!file.type.startsWith('image/')) {
+          alert('请选择图片文件。');
+          reset();
+          return;
+        }
+
+        await loadImage(file);
+        originalFile = file;
+        controls.hidden = false;
+        processBtn.disabled = false;
+        downloadBtn.classList.add('hidden');
+      } catch (error) {
+        console.error(error);
+        alert('图片加载失败，请重试或更换文件。');
+        reset();
+      }
+    });
+
+    scaleInput.addEventListener('input', () => {
+      scaleValue.textContent = `${Number(scaleInput.value).toFixed(2)}×`;
+    });
+
+    processBtn.addEventListener('click', async () => {
+      if (!originalBitmap) return;
+
+      processBtn.disabled = true;
+      processBtn.textContent = '处理中...';
+
+      try {
+        await upscaleImage();
+        processBtn.textContent = '重新放大';
+        downloadBtn.classList.remove('hidden');
+      } catch (error) {
+        console.error(error);
+        alert('放大失败，请稍后再试。');
+        processBtn.textContent = '开始放大';
+      } finally {
+        processBtn.disabled = false;
+      }
+    });
+
+    downloadBtn.addEventListener('click', async () => {
+      if (!upscaledCanvas.width || !upscaledCanvas.height) {
+        alert('请先放大图片。');
+        return;
+      }
+
+      if (upscaledBlobUrl) {
+        URL.revokeObjectURL(upscaledBlobUrl);
+      }
+
+      try {
+        const blob = await new Promise((resolve) => {
+          upscaledCanvas.toBlob(resolve, 'image/png', 1);
+        });
+
+        if (!blob) {
+          throw new Error('生成图片失败');
+        }
+
+        upscaledBlobUrl = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = upscaledBlobUrl;
+        link.download = generateFileName();
+        link.click();
+      } catch (error) {
+        console.error(error);
+        alert('下载失败，请重试。');
+      }
+    });
+
+    async function loadImage(file) {
+      if (originalBitmap) {
+        originalBitmap.close && originalBitmap.close();
+        originalBitmap = null;
+      }
+
+      const bitmap = await createImageBitmap(file);
+      originalBitmap = bitmap;
+
+      renderOriginal();
+      upscaledCtx.clearRect(0, 0, upscaledCanvas.width, upscaledCanvas.height);
+      upscaledCanvas.width = 0;
+      upscaledCanvas.height = 0;
+    }
+
+    function renderOriginal() {
+      if (!originalBitmap) return;
+
+      originalCanvas.width = originalBitmap.width;
+      originalCanvas.height = originalBitmap.height;
+      originalCtx.imageSmoothingEnabled = true;
+      originalCtx.imageSmoothingQuality = 'high';
+      originalCtx.clearRect(0, 0, originalCanvas.width, originalCanvas.height);
+      originalCtx.drawImage(originalBitmap, 0, 0);
+    }
+
+    async function upscaleImage() {
+      const scale = Number(scaleInput.value);
+      const width = Math.round(originalBitmap.width * scale);
+      const height = Math.round(originalBitmap.height * scale);
+
+      upscaledCanvas.width = width;
+      upscaledCanvas.height = height;
+
+      const quality = qualitySelect.value;
+
+      if (quality === 'pixelated') {
+        upscaledCtx.imageSmoothingEnabled = false;
+      } else {
+        upscaledCtx.imageSmoothingEnabled = true;
+        upscaledCtx.imageSmoothingQuality = quality;
+      }
+
+      upscaledCtx.clearRect(0, 0, width, height);
+      upscaledCtx.drawImage(originalBitmap, 0, 0, width, height);
+    }
+
+    function generateFileName() {
+      const baseName = originalFile ? originalFile.name.replace(/\.[^.]+$/, '') : 'image';
+      const scale = Number(scaleInput.value).toFixed(2).replace('.', '');
+      const timestamp = new Date().toISOString().replace(/[-:]/g, '').slice(0, 15);
+      return `${baseName}_upscaled_${scale}_${timestamp}.png`;
+    }
+
+    function reset() {
+      controls.hidden = true;
+      processBtn.disabled = true;
+      processBtn.textContent = '开始放大';
+      downloadBtn.classList.add('hidden');
+      originalCtx.clearRect(0, 0, originalCanvas.width, originalCanvas.height);
+      upscaledCtx.clearRect(0, 0, upscaledCanvas.width, upscaledCanvas.height);
+      originalCanvas.width = 0;
+      originalCanvas.height = 0;
+      upscaledCanvas.width = 0;
+      upscaledCanvas.height = 0;
+
+      if (upscaledBlobUrl) {
+        URL.revokeObjectURL(upscaledBlobUrl);
+        upscaledBlobUrl = null;
+      }
+
+      if (originalBitmap) {
+        originalBitmap.close && originalBitmap.close();
+        originalBitmap = null;
+      }
+    }
+
+    window.addEventListener('beforeunload', () => {
+      if (upscaledBlobUrl) {
+        URL.revokeObjectURL(upscaledBlobUrl);
+      }
+    });
+  </script>
+</body>
+</html>
+
